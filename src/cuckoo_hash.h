@@ -46,6 +46,7 @@ struct cuckoo_hash
   struct _cuckoo_hash_elem *table;
   size_t count;
   size_t power;
+  size_t recursion_limit;
 };
 
 
@@ -64,7 +65,7 @@ extern "C" {
   exhausted).
 */
 bool
-cuckoo_hash_init(struct cuckoo_hash *hash, unsigned char power);
+cuckoo_hash_init(struct cuckoo_hash *hash, size_t power);
 
 
 /*

@@ -34,7 +34,7 @@ compute_hash(uint64_t key, uint32_t *h1, uint32_t *h2)
   *h2 = 0x6d7839d0;
   hashlittle2(&key, sizeof(key), h1, h2);
 
-  if (*h1 != *h2) {
+  if (*h1 == *h2) {
     *h2 = ~*h2;
   }
 }
@@ -44,6 +44,7 @@ bool cuckoo_hash_init(struct cuckoo_hash *hash, size_t power) {
 
   hash->count = 0;
   hash->power = power;
+  hash->recursion_limit = 16;
   hash->table = calloc(2 << hash->power, sizeof(*hash->table));
   if (!hash->table)
     return false;
@@ -72,7 +73,7 @@ lookup(const struct cuckoo_hash *hash, uint64_t key,
 {
   struct _cuckoo_hash_elem *elem;
 
-  uint32_t mask = (1 << hash->power) - 1;
+  uint32_t mask = (2 << hash->power) - 1;
 
   elem = bin_at(hash, (h1 & mask));
 
@@ -117,20 +118,20 @@ static bool grow_table(struct cuckoo_hash *hash) {
   size_t old_size = 2 << hash->power;
   size_t new_size = old_size << 1;
 
-  struct _cuckoo_hash_elem *table = realloc(hash->table, size);
+  struct _cuckoo_hash_elem *table = realloc(hash->table, new_size);
   if (!table) {
     return false;
   }
 
   hash->table = table;
-  memcpy(hash->table + size, hash->table, size);
+  memset(hash->table + old_size, 0, old_size);
 
   ++hash->power;
 
   return true;
 }
 
-
+#if 0
 static bool grow_bin_size(struct cuckoo_hash *hash) {
   size_t size =
     ((size_t) hash->bin_size << hash->power) * sizeof(*hash->table);
@@ -153,34 +154,33 @@ static bool grow_bin_size(struct cuckoo_hash *hash) {
 
   return true;
 }
+#endif
 
 
 static bool undo_insert(struct cuckoo_hash *hash,
-    struct _cuckoo_hash_elem *item, size_t max_depth,
-    uint32_t offset, int phase) {
+    struct _cuckoo_hash_elem *item) {
 
-  uint32_t mask = (1U << hash->power) - 1;
+  uint32_t mask = (2 << hash->power) - 1;
 
-  for (size_t depth = 0; depth < max_depth * phase; ++depth) {
-    if (offset-- == 0)
-      offset = hash->bin_size - 1;
+  for (size_t depth = 0; depth < hash->recursion_limit; ++depth) {
 
     uint32_t h2m = item->hash2 & mask;
-    struct _cuckoo_hash_elem *beg = bin_at(hash, h2m);
 
-    struct _cuckoo_hash_elem victim = beg[offset];
+    struct _cuckoo_hash_elem *victim = bin_at(hash, h2m);
+    struct _cuckoo_hash_elem cpy = *victim;
 
-    beg[offset].hash_item = item->hash_item;
-    beg[offset].hash1 = item->hash2;
-    beg[offset].hash2 = item->hash1;
+    uint32_t h1m = victim->hash1 & mask;
 
-    uint32_t h1m = victim.hash1 & mask;
+    victim->hash_item = item->hash_item;
+    victim->hash1 = item->hash2;
+    victim->hash2 = item->hash1;
+
     if (h1m != h2m) {
-      assert(depth >= max_depth);
+      assert(depth >= hash->recursion_limit);
       return true;
     }
 
-    *item = victim;
+    *item = cpy;
   }
 
   return false;
@@ -189,53 +189,35 @@ static bool undo_insert(struct cuckoo_hash *hash,
 
 static inline bool insert(struct cuckoo_hash *hash,
      struct _cuckoo_hash_elem *item) {
-  size_t max_depth = (size_t) hash->power << 5;
-  if (max_depth > (size_t) hash->bin_size << hash->power)
-    max_depth = (size_t) hash->bin_size << hash->power;
+  size_t max_depth = (size_t) 16;
 
-  uint32_t offset = 0;
-  int phase = 0;
-  while (phase < 2) {
-    uint32_t mask = (1U << hash->power) - 1;
+  uint32_t mask = (2 << hash->power) - 1;
 
-    for (size_t depth = 0; depth < max_depth; ++depth) {
-      uint32_t h1m = item->hash1 & mask;
-      struct _cuckoo_hash_elem *beg = bin_at(hash, h1m);
-      struct _cuckoo_hash_elem *end = beg + hash->bin_size;
-      for (struct _cuckoo_hash_elem *elem = beg; elem != end; ++elem) {
-          if (elem->hash1 == elem->hash2 || (elem->hash1 & mask) != h1m) {
-            *elem = *item;
-            return true;
-          }
-      }
+  for (size_t depth = 0; depth < hash->recursion_limit; ++depth) {
+    uint32_t h1m = item->hash1 & mask;
+    struct _cuckoo_hash_elem *elem = bin_at(hash, h1m);
 
-      struct _cuckoo_hash_elem victim = beg[offset];
-
-      beg[offset] = *item;
-
-      item->hash_item = victim.hash_item;
-      item->hash1 = victim.hash2;
-      item->hash2 = victim.hash1;
-
-      if (++offset == hash->bin_size) offset = 0;
+    if (elem->hash1 == elem->hash2 || (elem->hash1 & mask) != h1m) {
+      *elem = *item;
+      return true;
     }
 
-    ++phase;
+    struct _cuckoo_hash_elem victim = *elem;
 
-    if (phase == 1 && !grow_table(hash)) break;
+    *elem = *item;
+
+    item->hash_item = victim.hash_item;
+    item->hash1 = victim.hash2;
+    item->hash2 = victim.hash1;
   }
 
-  if (grow_bin_size(hash)) {
-    uint32_t mask = (1U << hash->power) - 1;
-    struct _cuckoo_hash_elem *last =
-      bin_at(hash, (item->hash1 & mask) + 1) - 1;
+  // resize, try again.
+  if (grow_table(hash)) return insert(hash, item);
+  // If we can undo, all is forgiven.
+  if (undo_insert(hash, item)) return false;
 
-    *last = *item;
-
-    return true;
-  } else {
-    return undo_insert(hash, item, max_depth, offset, phase);
-  }
+  // We messed up the table, so die.
+  assert(false);
 }
 
 
@@ -269,7 +251,6 @@ cuckoo_hash_insert(struct cuckoo_hash *hash, uint64_t key, uint64_t value) {
   }
 }
 
-
 struct cuckoo_hash_item *
 cuckoo_hash_next(const struct cuckoo_hash *hash,
                  const struct cuckoo_hash_item *hash_item)
@@ -281,19 +262,19 @@ cuckoo_hash_next(const struct cuckoo_hash *hash,
         + 1)
      : hash->table);
 
-  uint32_t bin_count = 1U << hash->power;
+  uint32_t bin_count = 2 << hash->power;
   struct _cuckoo_hash_elem *end = bin_at(hash, bin_count);
   uint32_t mask = bin_count - 1;
   while (elem != end) {
     if (elem->hash1 != elem->hash2) {
-        /*
-          Test that the element is valid, i.e., its hash1 matches
-          the bin index it resides in.
-        */
-        struct _cuckoo_hash_elem *bin = bin_at(hash, (elem->hash1 & mask));
-        if (bin <= elem && elem < bin + hash->bin_size)
-          return &elem->hash_item;
-      }
+      /*
+        Test that the element is valid, i.e., its hash1 matches
+        the bin index it resides in.
+      */
+      struct _cuckoo_hash_elem *bin = bin_at(hash, (elem->hash1 & mask));
+      if (bin <= elem && elem < bin)
+        return &elem->hash_item;
+    }
 
     ++elem;
   }
