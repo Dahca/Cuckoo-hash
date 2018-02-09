@@ -23,12 +23,13 @@
 #include <unordered_map>
 #endif
 #include <map>
-
+#include <cassert>
 #include <string>
 #include <iostream>
 #include <memory>
 #include <sstream>
 #include <cstdlib>
+#include <cstdint>
 #include <ctime>
 #ifdef HAVE_CONFIG_H
 #include "autoconfig.h"
@@ -39,10 +40,9 @@
 #include "test.h"
 
 
-struct Data
-{
-  std::string key;
-  int data;
+struct Data {
+  uint64_t key;
+  uint64_t data;
 };
 
 
@@ -80,7 +80,7 @@ load_factor(Cont *cont)
 template<>
 inline
 double
-load_factor<std::map<std::string, int> >(std::map<std::string, int> *)
+load_factor<std::map<uint64_t, uint64_t> >(std::map<uint64_t, uint64_t> *)
 {
   return 1.0;
 }
@@ -93,7 +93,7 @@ load_factor<cuckoo_hash>(cuckoo_hash *cont)
 {
   /* Peek hash size.  */
   return (static_cast<double>(cuckoo_hash_count(cont))
-          / (static_cast<size_t>(cont->bin_size) << cont->power));
+          / (static_cast<size_t>(2 << cont->power)));
 }
 
 
@@ -111,8 +111,7 @@ inline
 void
 insert<cuckoo_hash>(cuckoo_hash *cont, Data *d)
 {
-  if (cuckoo_hash_insert(cont, d->key.c_str(), d->key.size(), d)
-      == CUCKOO_HASH_FAILED)
+  if (cuckoo_hash_insert(cont, d->key, d->data) == CUCKOO_HASH_FAILED)
     throw std::bad_alloc();
 }
 
@@ -123,11 +122,10 @@ int
 lookup(Cont *cont, const Data *d)
 {
   typename Cont::const_iterator it = cont->find(d->key);
-  if (it != cont->end())
-    {
-      ok(it->second == d->data);
-      return 1;
-    }
+  if (it != cont->end()) {
+    ok(it->second == d->data);
+    return 1;
+  }
 
   return 0;
 }
@@ -139,13 +137,11 @@ int
 lookup<cuckoo_hash>(cuckoo_hash *cont, const Data *d)
 {
   const cuckoo_hash_item *it =
-    cuckoo_hash_lookup(cont, d->key.c_str(), d->key.size());
-  if (it != NULL)
-    {
-      /* Let's be fair and access actual data.  */
-      ok(static_cast<const Data *>(it->value)->data == d->data);
-      return 1;
-    }
+    cuckoo_hash_lookup(cont, d->key);
+  if (it != NULL) {
+    ok(it->value == d->data);
+    return 1;
+  }
 
   return 0;
 }
@@ -154,8 +150,7 @@ lookup<cuckoo_hash>(cuckoo_hash *cont, const Data *d)
 template<class Cont>
 static inline
 void
-remove(Cont *cont, const Data *d)
-{
+remove(Cont *cont, const Data *d) {
   cont->erase(d->key);
 }
 
@@ -165,8 +160,7 @@ inline
 void
 remove<cuckoo_hash>(cuckoo_hash *cont, const Data *d)
 {
-  cuckoo_hash_remove(cont,
-                     cuckoo_hash_lookup(cont, d->key.c_str(), d->key.size()));
+  cuckoo_hash_remove(cont, cuckoo_hash_lookup(cont, d->key));
 }
 
 
@@ -178,8 +172,9 @@ traverse(Cont *cont)
   size_t sum = 0;
   for (typename Cont::const_iterator it = cont->begin();
        it != cont->end();
-       ++it)
+       ++it) {
     sum += it->second;
+  }
 
   return sum;
 }
@@ -190,9 +185,10 @@ inline
 size_t
 traverse<cuckoo_hash>(cuckoo_hash *cont)
 {
-  size_t sum = 0;
-  for (const cuckoo_hash_item *cuckoo_hash_each(it, cont))
-    sum += static_cast<const Data *>(it->value)->data;
+  uint64_t sum = 0;
+  for (const cuckoo_hash_item *cuckoo_hash_each(it, cont)) {
+    sum += it->value;
+  }
 
   return sum;
 }
@@ -200,21 +196,21 @@ traverse<cuckoo_hash>(cuckoo_hash *cont)
 
 #if defined(MAP)
 
-typedef std::map<std::string, int> cont_type;
+typedef std::map<uint64_t, uint64_t> cont_type;
 
 #elif defined(UNORDERED_MAP)
 
 #ifndef USE_CACHE
 
-typedef std::unordered_map<std::string, int> cont_type;
+typedef std::unordered_map<uint64_t, uint64_t> cont_type;
 
 #else  // USE_CACHE
 
 typedef
-  std::__unordered_map<std::string, int,
-                       std::hash<std::string>,
-                       std::equal_to<std::string>,
-                       std::allocator<std::pair<const std::string, int> >,
+  std::__unordered_map<uint64_t, uint64_t,
+                       std::hash<uint64_t>,
+                       std::equal_to<uint64_t>,
+                       std::allocator<std::pair<uint64_t, uint64_t> >,
                        true> cont_type;
 
 #endif  // USE_CACHE
@@ -226,14 +222,11 @@ typedef cuckoo_hash cont_type;
 #endif
 
 
-int
-main(int argc, char *argv[])
-{
-  if (argc < 3 || argc > 4)
-    {
-      std::cerr << "Usage: " << argv[0] << " SEED COUNT [REPEAT]" << std::endl;
-      exit(2);
-    }
+int main(int argc, char *argv[]) {
+  if (argc < 3 || argc > 4) {
+    std::cerr << "Usage: " << argv[0] << " SEED COUNT [REPEAT]" << std::endl;
+    exit(2);
+  }
 
   unsigned int seed;
   {
@@ -248,11 +241,10 @@ main(int argc, char *argv[])
   }
 
   int repeat = 1;
-  if (argc == 4)
-    {
-      std::istringstream arg(argv[3]);
-      arg >> repeat;
-    }
+  if (argc == 4) {
+    std::istringstream arg(argv[3]);
+    arg >> repeat;
+  }
 
   srand(seed);
 
@@ -260,20 +252,16 @@ main(int argc, char *argv[])
   int total = count * 1.1;
 
   Data *data = new Data[total];
-  for (int i = 0; i < total; ++i)
-    {
-      std::ostringstream key;
-      key << 'k' << i;
-      data[i].key = key.str();
-      data[i].data = i;
-    }
+  for (int i = 0; i < total; ++i) {
+    data[i].key = i;
+    data[i].data = i;
+  }
 
   // Shuffle.
-  for (int n = total - 1; n > 0; --n)
-    {
-      int i = rand() / (static_cast<double>(RAND_MAX) + 1) * n;
-      std::swap(data[i], data[n]);
-    }
+  for (int n = total - 1; n > 0; --n) {
+    int i = rand() / (static_cast<double>(RAND_MAX) + 1) * n;
+    std::swap(data[i], data[n]);
+  }
 
   clock_t start, stop;
 
@@ -285,11 +273,10 @@ main(int argc, char *argv[])
 
   size_t sum = 0;
   start = clock();
-  for (int i = 0; i < count; ++i)
-    {
-      insert(cont, &data[i]);
-      sum += data[i].data;
-    }
+  for (int i = 0; i < count; ++i) {
+    insert(cont, &data[i]);
+    sum += data[i].data;
+  }
   stop = clock();
 
 #ifdef HAVE_MALLINFO
@@ -305,24 +292,23 @@ main(int argc, char *argv[])
             << std::endl;
 
   start = clock();
-  for (int j = 0; j < repeat; ++j)
-    {
-      int found = 0;
-      for (int i = 0; i < total; ++i)
-        found += lookup(cont, &data[i]);
-      ok(found == count);
+  for (int j = 0; j < repeat; ++j) {
+    int found = 0;
+    for (int i = 0; i < total; ++i) {
+      found += lookup(cont, &data[i]);
     }
+    ok(found == count);
+  }
   stop = clock();
   std::cout << "lookup (x " << repeat << "): "
             << static_cast<double>(stop - start) / CLOCKS_PER_SEC << " sec"
             << std::endl;
 
   start = clock();
-  for (int j = 0; j < repeat; ++j)
-    {
-      size_t s = traverse(cont);
-      ok(s == sum);
-    }
+  for (int j = 0; j < repeat; ++j) {
+    size_t s = traverse(cont);
+    ok(s == sum, " found: %lu, expected: %d", s, sum);
+  }
   stop = clock();
   std::cout << "traverse (x " << repeat << "): "
             << static_cast<double>(stop - start) / CLOCKS_PER_SEC << " sec"

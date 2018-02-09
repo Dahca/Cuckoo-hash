@@ -22,6 +22,11 @@
 #include <assert.h>
 
 
+static inline size_t size(struct cuckoo_hash *hash) {
+  size_t num_elements = 2 << hash->power;
+  return num_elements * (sizeof(struct _cuckoo_hash_elem));
+}
+
 static inline
 void
 compute_hash(uint64_t key, uint32_t *h1, uint32_t *h2)
@@ -113,49 +118,35 @@ void cuckoo_hash_remove(struct cuckoo_hash *hash,
   --hash->count;
 }
 
+static inline bool insert(struct cuckoo_hash*, struct _cuckoo_hash_elem*);
 
 static bool grow_table(struct cuckoo_hash *hash) {
   size_t old_size = 2 << hash->power;
   size_t new_size = old_size << 1;
 
-  struct _cuckoo_hash_elem *table = realloc(hash->table, new_size);
+  struct _cuckoo_hash_elem *table = calloc(new_size, sizeof(*hash->table));
   if (!table) {
     return false;
   }
 
+  struct cuckoo_hash cpy = {
+    .table = table,
+    .count = hash->count,
+    .power = hash->power + 1,
+    .recursion_limit = hash->recursion_limit
+  };
+
+  // rehash into the other table
+  for (struct cuckoo_hash_item *cuckoo_hash_each(it, hash)) {
+    assert(insert(&cpy, (struct _cuckoo_hash_elem*)it));
+  }
+
   hash->table = table;
-  memset(hash->table + old_size, 0, old_size);
 
   ++hash->power;
 
   return true;
 }
-
-#if 0
-static bool grow_bin_size(struct cuckoo_hash *hash) {
-  size_t size =
-    ((size_t) hash->bin_size << hash->power) * sizeof(*hash->table);
-  uint32_t bin_count = 1U << hash->power;
-  size_t add = bin_count * sizeof(*hash->table);
-  struct _cuckoo_hash_elem *table = realloc(hash->table, size + add);
-  if (! table)
-    return false;
-
-  hash->table = table;
-  for (uint32_t bin = bin_count - 1; bin > 0; --bin) {
-    struct _cuckoo_hash_elem *old = bin_at(hash, bin);
-    struct _cuckoo_hash_elem *new = old + bin;
-    memmove(new, old, hash->bin_size * sizeof(*hash->table));
-    memset(new + hash->bin_size, 0, sizeof(*hash->table));
-  }
-  memset(hash->table + hash->bin_size, 0, sizeof(*hash->table));
-
-  ++hash->bin_size;
-
-  return true;
-}
-#endif
-
 
 static bool undo_insert(struct cuckoo_hash *hash,
     struct _cuckoo_hash_elem *item) {
@@ -255,25 +246,24 @@ struct cuckoo_hash_item *
 cuckoo_hash_next(const struct cuckoo_hash *hash,
                  const struct cuckoo_hash_item *hash_item)
 {
+#if 1
   struct _cuckoo_hash_elem *elem =
     (hash_item != NULL
      ? ((struct _cuckoo_hash_elem *)
         ((char *) hash_item - offsetof(struct _cuckoo_hash_elem, hash_item))
         + 1)
      : hash->table);
+#else
+  struct _cuckoo_hash_elem *elem = (struct _cuckoo_hash_elem*)hash_item;
+#endif
 
   uint32_t bin_count = 2 << hash->power;
-  struct _cuckoo_hash_elem *end = bin_at(hash, bin_count);
   uint32_t mask = bin_count - 1;
+  struct _cuckoo_hash_elem *end = bin_at(hash, bin_count);
+
   while (elem != end) {
     if (elem->hash1 != elem->hash2) {
-      /*
-        Test that the element is valid, i.e., its hash1 matches
-        the bin index it resides in.
-      */
-      struct _cuckoo_hash_elem *bin = bin_at(hash, (elem->hash1 & mask));
-      if (bin <= elem && elem < bin)
-        return &elem->hash_item;
+      return &elem->hash_item;
     }
 
     ++elem;

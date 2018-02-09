@@ -66,8 +66,6 @@ AM_CONDITIONAL([HAVE_UNORDERED_MAP_CACHE],
 
 AC_LANG_POP
 
-XPROBES
-
 AC_SUBST([RPM_VERSION], [`echo VERSION_STRING | sed -e 's/-.*//'`])
 AC_SUBST([RPM_RELEASE], [`echo VERSION_STRING | sed -e 's/[[^-]]*-\?//'`])
 

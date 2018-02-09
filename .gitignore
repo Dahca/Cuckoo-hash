@@ -21,3 +21,16 @@ src/autoconfig.h
 src/stamp-h1
 stamp-h
 test/.deps/
+autoscan.log
+configure.scan
+src/autoconfig.h.in~
+test/.libs/
+test/cuckoo_hash
+test/cuckoo_hash.sh.log
+test/cuckoo_hash.sh.trs
+test/std-map
+test/std-unordered_map
+test/std_map-test.o
+test/std_unordered_map-test.o
+test/test-suite.log
+test/test.o
