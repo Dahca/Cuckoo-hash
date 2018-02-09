@@ -141,6 +141,8 @@ static bool grow_table(struct cuckoo_hash *hash) {
     assert(insert(&cpy, (struct _cuckoo_hash_elem*)it));
   }
 
+  free(hash->table);
+
   hash->table = table;
 
   ++hash->power;

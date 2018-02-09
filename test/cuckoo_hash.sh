@@ -1,6 +1,6 @@
 #! /bin/sh
-
+DIR=$(dirname $0)
 COUNT=500000
 
 echo "Running the test for $COUNT elements"
-./cuckoo_hash 0 $COUNT
+$DIR/cuckoo_hash 0 $COUNT

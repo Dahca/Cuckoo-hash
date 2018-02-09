@@ -67,6 +67,24 @@ create<cuckoo_hash>()
   return hash;
 }
 
+template<class Cont>
+static inline
+void
+destroy(Cont* c)
+{
+  delete c;
+}
+
+
+template<>
+inline
+void
+destroy<cuckoo_hash>(cuckoo_hash* c)
+{
+  cuckoo_hash_destroy(c);
+  delete c;
+}
+
 
 template<class Cont>
 static inline
@@ -321,6 +339,10 @@ int main(int argc, char *argv[]) {
   std::cout << "remove: "
             << static_cast<double>(stop - start) / CLOCKS_PER_SEC << " sec"
             << std::endl;
+
+  // To make Valgrind shut up.
+  destroy(cont);
+  delete[] data;
 
   return 0;
 }
