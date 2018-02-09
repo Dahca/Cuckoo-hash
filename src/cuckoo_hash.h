@@ -20,6 +20,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 
 #define CUCKOO_HASH_FAILED  ((void *) -1)
@@ -27,21 +28,24 @@
 
 struct cuckoo_hash_item
 {
-  const void *key;
-  size_t key_len;
-  void *value;
+  uint64_t key;
+  uint64_t value;
 };
 
 
-struct _cuckoo_hash_elem;
+struct _cuckoo_hash_elem
+{
+  struct cuckoo_hash_item hash_item;
+  uint32_t hash1;
+  uint32_t hash2;
+};
 
 
 struct cuckoo_hash
 {
   struct _cuckoo_hash_elem *table;
   size_t count;
-  unsigned int bin_size;
-  unsigned char power;
+  size_t power;
 };
 
 
@@ -98,8 +102,7 @@ cuckoo_hash_count(struct cuckoo_hash *hash)
   dynamically.
 */
 struct cuckoo_hash_item *
-cuckoo_hash_insert(struct cuckoo_hash *hash,
-                   const void *key, size_t key_len, void *value);
+cuckoo_hash_insert(struct cuckoo_hash *hash, uint64_t key, uint64_t value);
 
 
 /*
@@ -111,8 +114,7 @@ cuckoo_hash_insert(struct cuckoo_hash *hash,
   doesn't exist in the hash.
 */
 struct cuckoo_hash_item *
-cuckoo_hash_lookup(const struct cuckoo_hash *hash,
-                   const void *key, size_t key_len);
+cuckoo_hash_lookup(const struct cuckoo_hash *hash, uint64_t key);
 
 
 /*
